@@ -5,6 +5,10 @@ set -Eeuo pipefail
 
 readonly ENV_DIR="env"
 readonly PYTORCH_NIGHTLY_INDEX="https://download.pytorch.org/whl/nightly/cpu"
+readonly PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# Garante caminhos previsíveis mesmo quando o script é chamado de outra pasta.
+cd "$PROJECT_DIR"
 
 log() {
   printf '\n\033[1;34m[setup]\033[0m %s\n' "$1"
@@ -82,16 +86,10 @@ python -m pip install --pre --upgrade \
   torch torchaudio \
   --index-url "$PYTORCH_NIGHTLY_INDEX"
 
-# Instala as bibliotecas de separação de fontes, análise e tratamento DSP,
-# interface web e leitura/escrita de arquivos de áudio.
+# Instala versões validadas das bibliotecas de separação de fontes, análise,
+# tratamento DSP, interface web e leitura/escrita de arquivos de áudio.
 log "Instalando as dependências Python do projeto..."
-python -m pip install --upgrade \
-  demucs \
-  librosa \
-  pedalboard \
-  gradio \
-  numpy \
-  soundfile
+python -m pip install --upgrade --requirement requirements.txt
 
 # Confirma que o PyTorch foi importado e informa se o backend MPS está disponível.
 log "Validando a instalação do PyTorch e o backend MPS..."

@@ -43,6 +43,10 @@ chmod +x setup_mac.sh
 
 O script verifica o Homebrew, instala o FFmpeg quando necessário, cria o ambiente virtual `env` e instala todas as dependências Python.
 
+As versões de aplicação validadas estão registradas em `requirements.txt`. O
+PyTorch e o torchaudio nightly continuam sendo instalados pelo índice oficial
+específico antes das demais dependências.
+
 Se o Homebrew ainda não estiver instalado, o script exibirá as instruções oficiais e encerrará sem alterar o ambiente Python.
 
 ## Ativação do ambiente
@@ -83,6 +87,7 @@ detectados controlam uma cadeia regionalizada do Pedalboard:
 - filtro paramétrico para atenuação de nasalidade;
 - filtro paramétrico e compressor para De-Esser;
 - envelopes de ataque e release para evitar clicks nas transições;
+- compensação RMS limitada e aplicada somente nos eventos processados;
 - proteção de pico no mixdown final.
 
 A interface oferece os presets **Suave**, **Balanceado** e **Intenso**, além de
@@ -117,6 +122,7 @@ O resultado esperado em um Mac Apple Silicon compatível é `True`.
 ├── README.md
 ├── app.py             # Pipeline de áudio e interface Gradio
 ├── env/              # Ambiente virtual local (não versionar)
+├── requirements.txt  # Versões validadas das dependências
 ├── setup_mac.sh      # Preparação automatizada do macOS
 └── tests/             # Testes automatizados do DSP e do mixdown
 ```
@@ -127,6 +133,7 @@ Projeto em fase de Prova de Conceito:
 
 - separação real de `vocals` e `no_vocals` com `htdemucs`;
 - aceleração MPS com fallback automático para CPU;
+- preservação de sample rate, duração e canais do arquivo enviado;
 - análise MIR heurística de nasalidade e sibilância;
 - EQ dinâmica e De-Esser regionalizados com três níveis de intensidade;
 - interface Gradio funcional com progresso e diagnóstico;

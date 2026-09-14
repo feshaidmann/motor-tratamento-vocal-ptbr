@@ -188,6 +188,61 @@ def _load_demucs_stem(stem_path: Path) -> tuple[np.ndarray, int]:
     return np.asarray(audio, dtype=np.float32), int(sample_rate)
 
 
+def _source_audio_metadata(source_path: Path) -> tuple[int, int, int]:
+    """Retorna sample rate, número de amostras e canais do arquivo original."""
+    try:
+        info = sf.info(source_path)
+    except RuntimeError as exc:
+        raise ValueError(f"Não foi possível ler os metadados de {source_path.name}.") from exc
+
+    if info.samplerate <= 0 or info.frames <= 0 or info.channels <= 0:
+        raise ValueError("O arquivo de entrada não contém áudio válido.")
+    return int(info.samplerate), int(info.frames), int(info.channels)
+
+
+def _adapt_channel_count(audio: np.ndarray, target_channels: int) -> np.ndarray:
+    """Converte stems mono/estéreo para a quantidade de canais da fonte."""
+    current_channels = audio.shape[1]
+    if current_channels == target_channels:
+        return audio
+    if target_channels == 1:
+        return np.mean(audio, axis=1, keepdims=True, dtype=np.float32)
+    if current_channels == 1:
+        return np.repeat(audio, target_channels, axis=1)
+    if current_channels > target_channels:
+        return audio[:, :target_channels]
+
+    repetitions = int(np.ceil(target_channels / current_channels))
+    return np.tile(audio, (1, repetitions))[:, :target_channels]
+
+
+def _align_stem_to_source(
+    audio: np.ndarray,
+    stem_sr: int,
+    source_sr: int,
+    source_samples: int,
+    source_channels: int,
+) -> np.ndarray:
+    """Restaura sample rate, duração e canais do arquivo enviado."""
+    if stem_sr != source_sr:
+        _log(f"Reamostrando stem de {stem_sr} Hz para {source_sr} Hz...")
+        audio = librosa.resample(
+            audio.T,
+            orig_sr=stem_sr,
+            target_sr=source_sr,
+            axis=-1,
+            res_type="soxr_hq",
+        ).T
+
+    audio = _adapt_channel_count(np.asarray(audio, dtype=np.float32), source_channels)
+    if audio.shape[0] > source_samples:
+        audio = audio[:source_samples]
+    elif audio.shape[0] < source_samples:
+        audio = np.pad(audio, ((0, source_samples - audio.shape[0]), (0, 0)))
+
+    return np.ascontiguousarray(audio, dtype=np.float32)
+
+
 def separate_stems(audio_path: str) -> tuple[np.ndarray, np.ndarray, int]:
     """Separa ``vocals`` e ``no_vocals`` com o modelo htdemucs.
 
@@ -199,6 +254,10 @@ def separate_stems(audio_path: str) -> tuple[np.ndarray, np.ndarray, int]:
     source_path = Path(audio_path).expanduser().resolve()
     if not source_path.is_file():
         raise FileNotFoundError(f"Arquivo de entrada não encontrado: {source_path}")
+    if source_path.suffix.lower() not in {".wav", ".mp3"}:
+        raise ValueError("Formato não suportado. Envie um arquivo WAV ou MP3.")
+
+    source_sr, source_samples, source_channels = _source_audio_metadata(source_path)
 
     preferred_device = _preferred_demucs_device()
 
@@ -229,22 +288,27 @@ def separate_stems(audio_path: str) -> tuple[np.ndarray, np.ndarray, int]:
             "Os stems do Demucs possuem taxas de amostragem incompatíveis: "
             f"{vocal_sr} Hz e {instrumental_sr} Hz."
         )
-    if vocals.shape[1] != no_vocals.shape[1]:
-        raise ValueError(
-            "Os stems do Demucs possuem quantidades de canais incompatíveis."
-        )
-
-    # Diferenças residuais de comprimento são truncadas para manter sample sync.
-    sample_count = min(vocals.shape[0], no_vocals.shape[0])
-    vocals = vocals[:sample_count]
-    no_vocals = no_vocals[:sample_count]
+    vocals = _align_stem_to_source(
+        vocals,
+        vocal_sr,
+        source_sr,
+        source_samples,
+        source_channels,
+    )
+    no_vocals = _align_stem_to_source(
+        no_vocals,
+        instrumental_sr,
+        source_sr,
+        source_samples,
+        source_channels,
+    )
 
     _log(
         "Separação Demucs concluída "
-        f"({vocals.shape[1]} canal(is), {vocal_sr} Hz, "
-        f"{sample_count / vocal_sr:.2f} s)."
+        f"({source_channels} canal(is), {source_sr} Hz, "
+        f"{source_samples / source_sr:.2f} s)."
     )
-    return vocals, no_vocals, vocal_sr
+    return vocals, no_vocals, source_sr
 
 
 def _find_sustained_regions(
@@ -500,6 +564,31 @@ def _safe_target_frequency(value: Any, fallback: float, sr: int) -> float:
     return float(np.clip(target, 40.0, sr * 0.48))
 
 
+def _match_rms_limited(
+    reference: np.ndarray,
+    processed: np.ndarray,
+    maximum_adjustment_db: float = 1.5,
+    envelope: np.ndarray | None = None,
+) -> tuple[np.ndarray, float]:
+    """Aproxima o volume A/B sem compensar integralmente a correção espectral."""
+    epsilon = np.finfo(np.float32).eps
+    reference_rms = float(np.sqrt(np.mean(np.square(reference), dtype=np.float64)))
+    processed_rms = float(np.sqrt(np.mean(np.square(processed), dtype=np.float64)))
+    if reference_rms <= epsilon or processed_rms <= epsilon:
+        return processed, 0.0
+
+    adjustment_db = 20.0 * np.log10(reference_rms / processed_rms)
+    adjustment_db = float(
+        np.clip(adjustment_db, -maximum_adjustment_db, maximum_adjustment_db)
+    )
+    gain = float(10.0 ** (adjustment_db / 20.0))
+    if envelope is None:
+        gain_curve: float | np.ndarray = gain
+    else:
+        gain_curve = 1.0 + (gain - 1.0) * envelope[:, np.newaxis]
+    return np.asarray(processed * gain_curve, dtype=np.float32), adjustment_db
+
+
 def apply_dsp_correction(
     vocal_array: np.ndarray,
     sr: int,
@@ -586,9 +675,19 @@ def apply_dsp_correction(
     ).astype(np.float32, copy=False)
 
     applied = bool(nasality_regions or sibilance_regions)
+    makeup_gain_db = 0.0
+    if applied:
+        combined_envelope = np.maximum(nasal_envelope, deesser_envelope)
+        processed, makeup_gain_db = _match_rms_limited(
+            vocal_array,
+            processed,
+            envelope=combined_envelope,
+        )
+
     analysis_data["correcao_dsp"] = {
         "status": "aplicada" if applied else "nenhum_evento_detectado",
         "preset": preset_name,
+        "ajuste_ab_rms_db": round(makeup_gain_db, 3),
         "nasalidade": {
             "eventos": len(nasality_regions),
             "frequencia_hz": round(nasality_target, 1),

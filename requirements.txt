@@ -1,0 +1,9 @@
+# Dependências de aplicação validadas no macOS Apple Silicon.
+# PyTorch e torchaudio nightly são instalados separadamente pelo setup_mac.sh.
+demucs==4.1.0
+gradio==6.27.0
+librosa==1.0.0
+numpy==2.5.3
+pedalboard==0.9.25
+soundfile==0.14.0
+

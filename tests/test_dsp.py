@@ -78,7 +78,34 @@ class DSPCorrectionTests(unittest.TestCase):
         self.assertEqual(rendered_sr, self.sample_rate)
         self.assertLessEqual(float(np.max(np.abs(rendered))), 0.990001)
 
+    def test_stem_alignment_restores_rate_length_and_mono_layout(self) -> None:
+        source = np.column_stack(
+            (
+                np.linspace(-0.5, 0.5, 500, dtype=np.float32),
+                np.linspace(0.5, -0.5, 500, dtype=np.float32),
+            )
+        )
+        aligned = app._align_stem_to_source(
+            source,
+            stem_sr=22_050,
+            source_sr=44_100,
+            source_samples=1_024,
+            source_channels=1,
+        )
+
+        self.assertEqual(aligned.shape, (1_024, 1))
+        self.assertEqual(aligned.dtype, np.float32)
+        self.assertTrue(np.isfinite(aligned).all())
+
+    def test_rms_matching_is_limited(self) -> None:
+        reference = np.full((1_000, 2), 0.50, dtype=np.float32)
+        quiet = np.full((1_000, 2), 0.05, dtype=np.float32)
+        adjusted, adjustment_db = app._match_rms_limited(reference, quiet)
+
+        self.assertAlmostEqual(adjustment_db, 1.5)
+        expected_gain = 10.0 ** (1.5 / 20.0)
+        np.testing.assert_allclose(adjusted, quiet * expected_gain, rtol=1e-6)
+
 
 if __name__ == "__main__":
     unittest.main()
-
