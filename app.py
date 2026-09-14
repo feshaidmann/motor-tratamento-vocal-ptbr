@@ -1,12 +1,14 @@
 """PoC do Motor de Tratamento Vocal PT-BR com IA.
 
-Primeira iteração: a interface e o pipeline estão completos, mas a separação de
-fontes e a correção DSP são mocks intencionais para permitir a validação rápida
-do fluxo sem carregar o Demucs/PyTorch nem alterar o áudio enviado.
+Segunda iteração: a separação de fontes usa o Demucs/htdemucs de forma real,
+com aceleração MPS e fallback para CPU. A correção DSP permanece transparente
+para que a qualidade da separação seja validada antes das alterações sonoras.
 """
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import tempfile
 import time
 import traceback
@@ -91,39 +93,132 @@ def _log(message: str) -> None:
     print(f"[Motor Vocal PT-BR] {message}", flush=True)
 
 
-def _as_samples_channels(audio: np.ndarray) -> np.ndarray:
-    """Normaliza áudio do Librosa para o formato (amostras, canais)."""
-    audio = np.asarray(audio, dtype=np.float32)
-    if audio.ndim == 1:
-        return audio[:, np.newaxis]
-    if audio.ndim == 2:
-        return audio.T
-    raise ValueError(f"Formato de áudio não suportado: shape={audio.shape}")
+class DemucsExecutionError(RuntimeError):
+    """Representa uma falha retornada pelo processo de separação do Demucs."""
+
+
+def _preferred_demucs_device() -> str:
+    """Escolhe MPS quando disponível e usa CPU como opção segura."""
+    try:
+        import torch
+
+        if torch.backends.mps.is_built() and torch.backends.mps.is_available():
+            return "mps"
+    except (ImportError, AttributeError):
+        pass
+    return "cpu"
+
+
+def _run_demucs(audio_path: Path, output_dir: Path, device: str) -> None:
+    """Executa a CLI do Demucs e retransmite sua saída para o terminal."""
+    command = [
+        sys.executable,
+        "-m",
+        "demucs",
+        "--two-stems=vocals",
+        "--name",
+        "htdemucs",
+        "--device",
+        device,
+        "--float32",
+        "--clip-mode",
+        "none",
+        "--out",
+        str(output_dir),
+        str(audio_path),
+    ]
+
+    _log(f"Executando Demucs no dispositivo '{device}'...")
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+
+    output_lines: list[str] = []
+    if process.stdout is not None:
+        for line in process.stdout:
+            clean_line = line.rstrip()
+            if clean_line:
+                output_lines.append(clean_line)
+                _log(f"Demucs · {clean_line}")
+
+    return_code = process.wait()
+    if return_code != 0:
+        diagnostic = "\n".join(output_lines[-12:])
+        raise DemucsExecutionError(
+            f"Demucs encerrou com código {return_code} usando {device}."
+            + (f"\n{diagnostic}" if diagnostic else "")
+        )
+
+
+def _load_demucs_stem(stem_path: Path) -> tuple[np.ndarray, int]:
+    """Carrega um stem WAV como float32 no formato (amostras, canais)."""
+    audio, sample_rate = sf.read(stem_path, dtype="float32", always_2d=True)
+    return np.asarray(audio, dtype=np.float32), int(sample_rate)
 
 
 def separate_stems(audio_path: str) -> tuple[np.ndarray, np.ndarray, int]:
-    """Simula a separação htdemucs e retorna vocals, no_vocals e sample rate.
+    """Separa ``vocals`` e ``no_vocals`` com o modelo htdemucs.
 
-    Nesta iteração, o stem ``vocals`` recebe uma cópia do áudio original e o
-    stem ``no_vocals`` recebe silêncio. Portanto, a mixagem final reconstrói o
-    sinal de entrada sem duplicar o ganho.
+    A função tenta usar o backend MPS/Metal. Se essa execução falhar, refaz a
+    separação em CPU. Os WAVs intermediários vivem somente durante esta chamada
+    e são removidos automaticamente depois de carregados em memória.
     """
-    _log("Etapa 1/4 — Simulando separação com Demucs/htdemucs...")
-    time.sleep(MOCK_DELAY_SECONDS)
+    _log("Etapa 1/4 — Separando voz e instrumental com Demucs/htdemucs...")
+    source_path = Path(audio_path).expanduser().resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"Arquivo de entrada não encontrado: {source_path}")
 
-    # mono=False preserva os canais; sr=None preserva a taxa de amostragem.
-    audio, sample_rate = librosa.load(audio_path, sr=None, mono=False)
-    audio = _as_samples_channels(audio)
+    preferred_device = _preferred_demucs_device()
 
-    vocals = audio.copy()
-    no_vocals = np.zeros_like(audio)
+    with tempfile.TemporaryDirectory(prefix="motor_vocal_demucs_") as temp_dir:
+        demucs_output = Path(temp_dir)
+        try:
+            _run_demucs(source_path, demucs_output, preferred_device)
+        except DemucsExecutionError:
+            if preferred_device == "cpu":
+                raise
+            _log("A execução MPS falhou; repetindo a separação em CPU...")
+            _run_demucs(source_path, demucs_output, "cpu")
+
+        vocal_candidates = list(demucs_output.rglob("vocals.wav"))
+        instrumental_candidates = list(demucs_output.rglob("no_vocals.wav"))
+        if len(vocal_candidates) != 1 or len(instrumental_candidates) != 1:
+            raise FileNotFoundError(
+                "O Demucs não produziu exatamente um par vocals/no_vocals."
+            )
+
+        vocals, vocal_sr = _load_demucs_stem(vocal_candidates[0])
+        no_vocals, instrumental_sr = _load_demucs_stem(
+            instrumental_candidates[0]
+        )
+
+    if vocal_sr != instrumental_sr:
+        raise ValueError(
+            "Os stems do Demucs possuem taxas de amostragem incompatíveis: "
+            f"{vocal_sr} Hz e {instrumental_sr} Hz."
+        )
+    if vocals.shape[1] != no_vocals.shape[1]:
+        raise ValueError(
+            "Os stems do Demucs possuem quantidades de canais incompatíveis."
+        )
+
+    # Diferenças residuais de comprimento são truncadas para manter sample sync.
+    sample_count = min(vocals.shape[0], no_vocals.shape[0])
+    vocals = vocals[:sample_count]
+    no_vocals = no_vocals[:sample_count]
 
     _log(
-        "Mock Demucs concluído "
-        f"({audio.shape[1]} canal(is), {sample_rate} Hz, "
-        f"{audio.shape[0] / sample_rate:.2f} s)."
+        "Separação Demucs concluída "
+        f"({vocals.shape[1]} canal(is), {vocal_sr} Hz, "
+        f"{sample_count / vocal_sr:.2f} s)."
     )
-    return vocals, no_vocals, int(sample_rate)
+    return vocals, no_vocals, vocal_sr
 
 
 def _find_sustained_regions(
@@ -341,7 +436,7 @@ def process_audio(
     try:
         progress(0.05, desc="Preparando o arquivo de áudio...")
 
-        progress(0.15, desc="Separando voz e instrumental (mock)...")
+        progress(0.15, desc="Separando voz e instrumental com Demucs...")
         vocals, instrumental, sample_rate = separate_stems(audio_path)
 
         progress(0.45, desc="Analisando nasalidade e sibilância...")
@@ -377,7 +472,7 @@ def gradio_interface() -> gr.Blocks:
         gr.HTML(
             """
             <section class="studio-header">
-                <span class="mock-badge">PoC · Pipeline Mock</span>
+                <span class="mock-badge">PoC · Demucs ativo · DSP Mock</span>
                 <h1>Motor de Tratamento Vocal PT-BR</h1>
                 <p>
                     Separação vocal, análise espectral e correção de nasalidade
@@ -401,8 +496,9 @@ def gradio_interface() -> gr.Blocks:
                     size="lg",
                 )
                 gr.Markdown(
-                    "A primeira execução pode levar alguns segundos. Nesta "
-                    "iteração, Demucs e DSP estão em modo de simulação."
+                    "Na primeira execução, o Demucs baixará o modelo htdemucs. "
+                    "A separação já é real; somente a correção DSP permanece "
+                    "em modo transparente nesta iteração."
                 )
 
             with gr.Column(scale=1, elem_classes="studio-panel"):

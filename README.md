@@ -59,6 +59,21 @@ Para sair do ambiente:
 deactivate
 ```
 
+## Executando a aplicação
+
+Com o ambiente virtual ativo, execute:
+
+```bash
+python app.py
+```
+
+Abra [http://127.0.0.1:7860](http://127.0.0.1:7860) no navegador. Na primeira
+separação, o Demucs fará o download do modelo `htdemucs`; as execuções seguintes
+usarão o modelo armazenado no cache local.
+
+O motor tenta executar a separação no backend MPS/Metal. Caso essa etapa falhe,
+ela é repetida automaticamente em CPU.
+
 ## Verificação do MPS
 
 O próprio setup informa ao final se o backend MPS está compilado e disponível. A verificação também pode ser repetida manualmente:
@@ -73,12 +88,20 @@ O resultado esperado em um Mac Apple Silicon compatível é `True`.
 
 ```text
 .
+├── .gitignore
 ├── README.md
+├── app.py             # Pipeline de áudio e interface Gradio
 ├── env/              # Ambiente virtual local (não versionar)
 └── setup_mac.sh      # Preparação automatizada do macOS
 ```
 
 ## Status
 
-Projeto em fase de Prova de Conceito. A arquitetura do pipeline, os modelos de correção regionalizada e a interface da aplicação serão evoluídos incrementalmente.
+Projeto em fase de Prova de Conceito:
 
+- separação real de `vocals` e `no_vocals` com `htdemucs`;
+- aceleração MPS com fallback automático para CPU;
+- análise MIR heurística de nasalidade e sibilância;
+- interface Gradio funcional com progresso e diagnóstico;
+- mixdown e exportação WAV em 32-bit float;
+- correção DSP ainda em modo transparente, sem alterar deliberadamente o vocal.
