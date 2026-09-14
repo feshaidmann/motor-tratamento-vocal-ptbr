@@ -1,0 +1,27 @@
+# Ambiente virtual Python
+env/
+.venv/
+
+# Cache e artefatos Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Arquivos locais do macOS e editores
+.DS_Store
+.idea/
+.vscode/
+
+# Artefatos de separação e áudio gerado
+separated/
+outputs/
+*.tmp.wav
+
+# Variáveis de ambiente e segredos locais
+.env
+.env.*
+!.env.example
+
