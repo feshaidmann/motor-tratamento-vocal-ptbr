@@ -1,8 +1,7 @@
 """PoC do Motor de Tratamento Vocal PT-BR com IA.
 
-Segunda iteração: a separação de fontes usa o Demucs/htdemucs de forma real,
-com aceleração MPS e fallback para CPU. A correção DSP permanece transparente
-para que a qualidade da separação seja validada antes das alterações sonoras.
+Terceira iteração: separação real com Demucs/htdemucs, aceleração MPS com
+fallback para CPU e correção DSP regionalizada com Pedalboard.
 """
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
-import time
 import traceback
 import uuid
 from pathlib import Path
@@ -20,12 +18,40 @@ import gradio as gr
 import librosa
 import numpy as np
 import soundfile as sf
-from pedalboard import Pedalboard
+from pedalboard import Compressor, PeakFilter, Pedalboard
 
 
 APP_TITLE = "Motor de Tratamento Vocal PT-BR com IA"
 OUTPUT_DIR = Path(tempfile.gettempdir()) / "motor_vocal_ptbr"
-MOCK_DELAY_SECONDS = 1.0
+DSP_PRESETS: dict[str, dict[str, float]] = {
+    "Suave": {
+        "nasality_gain_db": -1.5,
+        "nasality_q": 1.3,
+        "deesser_gain_db": -2.5,
+        "deesser_q": 1.7,
+        "compressor_threshold_db": -14.0,
+        "compressor_ratio": 1.5,
+        "wet_mix": 0.70,
+    },
+    "Balanceado": {
+        "nasality_gain_db": -3.0,
+        "nasality_q": 1.6,
+        "deesser_gain_db": -4.5,
+        "deesser_q": 2.0,
+        "compressor_threshold_db": -18.0,
+        "compressor_ratio": 2.5,
+        "wet_mix": 0.90,
+    },
+    "Intenso": {
+        "nasality_gain_db": -5.0,
+        "nasality_q": 2.0,
+        "deesser_gain_db": -7.0,
+        "deesser_q": 2.4,
+        "compressor_threshold_db": -22.0,
+        "compressor_ratio": 4.0,
+        "wet_mix": 1.0,
+    },
+}
 
 # O CSS complementa o tema Monochrome com uma estética escura de estúdio.
 STUDIO_CSS = """
@@ -230,11 +256,34 @@ def _find_sustained_regions(
     if band_ratio.size == 0 or not np.any(band_ratio > 0):
         return np.zeros_like(band_ratio, dtype=bool), []
 
-    threshold = max(
-        float(np.percentile(band_ratio, 75)),
-        float(np.median(band_ratio) + 0.5 * np.std(band_ratio)),
-    )
-    active = band_ratio >= threshold
+    # A suavização reduz a influência de transientes isolados. Em sinais muito
+    # estáveis (por exemplo, uma vogal longa), a banda inteira é considerada.
+    smoothing_frames = min(5, band_ratio.size)
+    smoothing_kernel = np.ones(smoothing_frames, dtype=np.float32)
+    smoothing_kernel /= smoothing_frames
+    smoothed = np.convolve(band_ratio, smoothing_kernel, mode="same")
+    median = float(np.median(smoothed))
+    deviation = float(np.std(smoothed))
+    if deviation <= max(median * 0.03, 1e-8):
+        active = smoothed >= median * 0.95
+    else:
+        threshold = max(
+            float(np.percentile(smoothed, 68)),
+            median + 0.30 * deviation,
+        )
+        threshold = min(threshold, float(np.percentile(smoothed, 90)))
+        active = smoothed >= threshold
+
+    # Une eventos separados por até dois frames, evitando que pequenas quedas
+    # internas quebrem uma mesma vogal ou consoante fricativa em vários trechos.
+    inactive_padded = np.pad((~active).astype(np.int8), (1, 1))
+    inactive_transitions = np.diff(inactive_padded)
+    gap_starts = np.flatnonzero(inactive_transitions == 1)
+    gap_ends = np.flatnonzero(inactive_transitions == -1)
+    for gap_start, gap_end in zip(gap_starts, gap_ends):
+        if gap_start > 0 and gap_end < active.size and gap_end - gap_start <= 2:
+            active[gap_start:gap_end] = True
+
     sustained = np.zeros_like(active, dtype=bool)
     regions: list[dict[str, float]] = []
 
@@ -296,6 +345,8 @@ def _analyze_band(
     return {
         "faixa_hz": [low_hz, high_hz],
         "frequencia_alvo_hz": round(target_hz, 1),
+        "energia_relativa_media": round(float(np.mean(band_ratio)), 5),
+        "energia_relativa_pico": round(float(np.max(band_ratio)), 5),
         "regioes_sustentadas": regions,
     }
 
@@ -325,9 +376,6 @@ def analyze_ptbr_artifacts(vocal_array: np.ndarray, sr: int) -> dict[str, Any]:
     )
     total_power = np.sum(power, axis=0)
 
-    # Aproximadamente 150 ms: reduz falsos positivos causados por transientes.
-    minimum_frames = max(2, int(np.ceil(0.15 * sr / hop_length)))
-
     nasality = _analyze_band(
         power,
         frequencies,
@@ -335,7 +383,7 @@ def analyze_ptbr_artifacts(vocal_array: np.ndarray, sr: int) -> dict[str, Any]:
         frame_times,
         low_hz=600.0,
         high_hz=1_200.0,
-        minimum_frames=minimum_frames,
+        minimum_frames=max(3, int(np.ceil(0.10 * sr / hop_length))),
     )
     sibilance = _analyze_band(
         power,
@@ -344,7 +392,7 @@ def analyze_ptbr_artifacts(vocal_array: np.ndarray, sr: int) -> dict[str, Any]:
         frame_times,
         low_hz=4_000.0,
         high_hz=9_000.0,
-        minimum_frames=minimum_frames,
+        minimum_frames=max(2, int(np.ceil(0.035 * sr / hop_length))),
     )
 
     centroid = librosa.feature.spectral_centroid(S=magnitude, sr=sr)
@@ -354,7 +402,9 @@ def analyze_ptbr_artifacts(vocal_array: np.ndarray, sr: int) -> dict[str, Any]:
         "nasalidade_ao_o": nasality,
         "sibilancia_s_x": sibilance,
         "centroide_espectral_medio_hz": round(mean_centroid, 1),
-        "observacao": "Diagnóstico heurístico da PoC; DSP ainda em modo mock.",
+        "observacao": (
+            "Diagnóstico heurístico da PoC; valide o resultado por audição A/B."
+        ),
     }
 
     _log(
@@ -365,31 +415,200 @@ def analyze_ptbr_artifacts(vocal_array: np.ndarray, sr: int) -> dict[str, Any]:
     return analysis_data
 
 
+def _temporal_envelope(
+    sample_count: int,
+    sr: int,
+    regions: list[dict[str, float]],
+    attack_ms: float,
+    release_ms: float,
+    maximum_level: float,
+) -> np.ndarray:
+    """Cria um envelope suave para aplicar DSP somente nas regiões detectadas."""
+    envelope = np.zeros(sample_count, dtype=np.float32)
+    attack_samples = max(1, int(sr * attack_ms / 1_000))
+    release_samples = max(1, int(sr * release_ms / 1_000))
+
+    for region in regions:
+        start = int(float(region["inicio_s"]) * sr)
+        end = int(float(region["fim_s"]) * sr) + 1
+        start = min(max(start, 0), sample_count)
+        end = min(max(end, start + 1), sample_count)
+        if start >= sample_count:
+            continue
+
+        attack_start = max(0, start - attack_samples)
+        release_end = min(sample_count, end + release_samples)
+
+        if start > attack_start:
+            attack = np.linspace(
+                0.0,
+                maximum_level,
+                start - attack_start,
+                endpoint=False,
+                dtype=np.float32,
+            )
+            envelope[attack_start:start] = np.maximum(
+                envelope[attack_start:start],
+                attack,
+            )
+
+        envelope[start:end] = np.maximum(envelope[start:end], maximum_level)
+
+        if release_end > end:
+            release = np.linspace(
+                maximum_level,
+                0.0,
+                release_end - end,
+                endpoint=True,
+                dtype=np.float32,
+            )
+            envelope[end:release_end] = np.maximum(
+                envelope[end:release_end],
+                release,
+            )
+
+    return envelope
+
+
+def _run_pedalboard(
+    board: Pedalboard,
+    audio: np.ndarray,
+    sr: int,
+) -> np.ndarray:
+    """Executa plugins no layout esperado e restaura (amostras, canais)."""
+    channels_samples = np.ascontiguousarray(audio.T, dtype=np.float32)
+    processed = board(channels_samples, sr)
+    return np.asarray(processed, dtype=np.float32).T
+
+
+def _blend_regionally(
+    dry_audio: np.ndarray,
+    wet_audio: np.ndarray,
+    envelope: np.ndarray,
+) -> np.ndarray:
+    """Faz crossfade sample a sample entre o sinal seco e o processado."""
+    wet_amount = envelope[:, np.newaxis]
+    return np.asarray(
+        dry_audio + (wet_audio - dry_audio) * wet_amount,
+        dtype=np.float32,
+    )
+
+
+def _safe_target_frequency(value: Any, fallback: float, sr: int) -> float:
+    """Mantém a frequência-alvo dentro da faixa processável do áudio."""
+    target = fallback if value is None else float(value)
+    return float(np.clip(target, 40.0, sr * 0.48))
+
+
 def apply_dsp_correction(
     vocal_array: np.ndarray,
     sr: int,
     analysis_data: dict[str, Any],
 ) -> np.ndarray:
-    """Simula a correção DSP com uma cadeia Pedalboard transparente.
+    """Aplica EQ dinâmica e De-Esser nas regiões detectadas pelo Librosa."""
+    _log("Etapa 3/4 — Aplicando EQ dinâmica e De-Esser com Pedalboard...")
 
-    Na próxima iteração, a cadeia vazia será substituída por EQ dinâmico e
-    de-esser orientados pelas frequências e regiões de ``analysis_data``.
-    """
-    _log("Etapa 3/4 — Simulando EQ dinâmica e De-Esser com Pedalboard...")
-    time.sleep(MOCK_DELAY_SECONDS)
+    preset_name = str(analysis_data.get("preset_dsp", "Balanceado"))
+    preset = DSP_PRESETS.get(preset_name, DSP_PRESETS["Balanceado"])
+    if preset_name not in DSP_PRESETS:
+        preset_name = "Balanceado"
 
-    # O Pedalboard trabalha no formato (canais, amostras). Uma cadeia vazia é
-    # intencionalmente transparente e mantém o mock integrado à API real.
-    transparent_board = Pedalboard([])
-    channels_samples = np.ascontiguousarray(vocal_array.T, dtype=np.float32)
-    processed = transparent_board(channels_samples, sr)
+    nasality = analysis_data["nasalidade_ao_o"]
+    sibilance = analysis_data["sibilancia_s_x"]
+    nasality_regions = nasality["regioes_sustentadas"]
+    sibilance_regions = sibilance["regioes_sustentadas"]
+    nasality_target = _safe_target_frequency(
+        nasality.get("frequencia_alvo_hz"),
+        fallback=900.0,
+        sr=sr,
+    )
+    sibilance_target = _safe_target_frequency(
+        sibilance.get("frequencia_alvo_hz"),
+        fallback=6_500.0,
+        sr=sr,
+    )
+
+    # A EQ de nasalidade cria uma variante atenuada do vocal. O envelope MIR
+    # faz o crossfade apenas sobre vogais sustentadas detectadas na banda.
+    nasality_board = Pedalboard(
+        [
+            PeakFilter(
+                cutoff_frequency_hz=nasality_target,
+                gain_db=preset["nasality_gain_db"],
+                q=preset["nasality_q"],
+            )
+        ]
+    )
+    nasal_wet = _run_pedalboard(nasality_board, vocal_array, sr)
+    nasal_envelope = _temporal_envelope(
+        vocal_array.shape[0],
+        sr,
+        nasality_regions,
+        attack_ms=25.0,
+        release_ms=110.0,
+        maximum_level=preset["wet_mix"],
+    )
+    processed = _blend_regionally(vocal_array, nasal_wet, nasal_envelope)
+
+    # O De-Esser combina um notch na frequência dominante com compressão. Como
+    # o resultado é misturado só durante fricativas, o restante do vocal mantém
+    # brilho e dinâmica originais.
+    deesser_board = Pedalboard(
+        [
+            PeakFilter(
+                cutoff_frequency_hz=sibilance_target,
+                gain_db=preset["deesser_gain_db"],
+                q=preset["deesser_q"],
+            ),
+            Compressor(
+                threshold_db=preset["compressor_threshold_db"],
+                ratio=preset["compressor_ratio"],
+                attack_ms=2.0,
+                release_ms=70.0,
+            ),
+        ]
+    )
+    deesser_wet = _run_pedalboard(deesser_board, processed, sr)
+    deesser_envelope = _temporal_envelope(
+        processed.shape[0],
+        sr,
+        sibilance_regions,
+        attack_ms=3.0,
+        release_ms=75.0,
+        maximum_level=preset["wet_mix"],
+    )
+    processed = _blend_regionally(processed, deesser_wet, deesser_envelope)
+    processed = np.nan_to_num(
+        processed,
+        nan=0.0,
+        posinf=1.0,
+        neginf=-1.0,
+    ).astype(np.float32, copy=False)
+
+    applied = bool(nasality_regions or sibilance_regions)
+    analysis_data["correcao_dsp"] = {
+        "status": "aplicada" if applied else "nenhum_evento_detectado",
+        "preset": preset_name,
+        "nasalidade": {
+            "eventos": len(nasality_regions),
+            "frequencia_hz": round(nasality_target, 1),
+            "atenuacao_maxima_db": preset["nasality_gain_db"],
+        },
+        "de_esser": {
+            "eventos": len(sibilance_regions),
+            "frequencia_hz": round(sibilance_target, 1),
+            "atenuacao_eq_maxima_db": preset["deesser_gain_db"],
+            "compressor_threshold_db": preset["compressor_threshold_db"],
+            "compressor_ratio": preset["compressor_ratio"],
+        },
+    }
 
     _log(
-        "Mock DSP concluído sem alterações no sinal "
-        f"({len(analysis_data['nasalidade_ao_o']['regioes_sustentadas'])} "
-        "região(ões) de nasalidade sinalizada(s))."
+        f"DSP concluído com preset {preset_name}: "
+        f"{len(nasality_regions)} evento(s) de nasalidade e "
+        f"{len(sibilance_regions)} evento(s) de sibilância."
     )
-    return np.asarray(processed, dtype=np.float32).T
+    return processed
 
 
 def mixdown_and_export(
@@ -417,18 +636,31 @@ def mixdown_and_export(
         copy=False,
     )
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = OUTPUT_DIR / f"vocal_ptbr_processado_{uuid.uuid4().hex[:10]}.wav"
-    sf.write(output_path, mixed, sr, format="WAV", subtype="FLOAT")
+    peak = float(np.max(np.abs(mixed)))
+    if peak > 0.99:
+        protection_gain = 0.99 / peak
+        mixed *= protection_gain
+        gain_db = 20.0 * np.log10(protection_gain)
+        _log(f"Proteção de pico aplicada ao mixdown: {gain_db:.2f} dB.")
 
+    output_path = _export_audio(mixed, sr, "mix_processado")
     _log(f"Processamento concluído: {output_path}")
+    return output_path
+
+
+def _export_audio(audio: np.ndarray, sr: int, label: str) -> str:
+    """Exporta um artefato de áudio temporário como WAV 32-bit float."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = OUTPUT_DIR / f"{label}_{uuid.uuid4().hex[:10]}.wav"
+    sf.write(output_path, audio, sr, format="WAV", subtype="FLOAT")
     return str(output_path)
 
 
 def process_audio(
     audio_path: str | None,
+    preset_dsp: str = "Balanceado",
     progress: gr.Progress = gr.Progress(),
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str, str, str, str, dict[str, Any]]:
     """Orquestra o pipeline e atualiza o progresso visual do Gradio."""
     if not audio_path:
         raise gr.Error("Envie um arquivo WAV ou MP3 antes de iniciar.")
@@ -441,8 +673,9 @@ def process_audio(
 
         progress(0.45, desc="Analisando nasalidade e sibilância...")
         analysis_data = analyze_ptbr_artifacts(vocals, sample_rate)
+        analysis_data["preset_dsp"] = preset_dsp
 
-        progress(0.70, desc="Aplicando EQ dinâmica e De-Esser (mock)...")
+        progress(0.70, desc="Aplicando EQ dinâmica e De-Esser...")
         processed_vocals = apply_dsp_correction(
             vocals,
             sample_rate,
@@ -455,9 +688,26 @@ def process_audio(
             instrumental,
             sample_rate,
         )
+        vocal_path = _export_audio(vocals, sample_rate, "vocal_isolado")
+        processed_vocal_path = _export_audio(
+            processed_vocals,
+            sample_rate,
+            "vocal_corrigido",
+        )
+        instrumental_path = _export_audio(
+            instrumental,
+            sample_rate,
+            "instrumental",
+        )
 
         progress(1.0, desc="Processamento concluído.")
-        return output_path, analysis_data
+        return (
+            output_path,
+            vocal_path,
+            processed_vocal_path,
+            instrumental_path,
+            analysis_data,
+        )
     except gr.Error:
         raise
     except Exception as exc:
@@ -472,7 +722,7 @@ def gradio_interface() -> gr.Blocks:
         gr.HTML(
             """
             <section class="studio-header">
-                <span class="mock-badge">PoC · Demucs ativo · DSP Mock</span>
+                <span class="mock-badge">PoC · Demucs + DSP ativos</span>
                 <h1>Motor de Tratamento Vocal PT-BR</h1>
                 <p>
                     Separação vocal, análise espectral e correção de nasalidade
@@ -490,6 +740,11 @@ def gradio_interface() -> gr.Blocks:
                     sources=["upload"],
                     type="filepath",
                 )
+                dsp_preset = gr.Radio(
+                    choices=list(DSP_PRESETS),
+                    value="Balanceado",
+                    label="Intensidade da correção",
+                )
                 process_button = gr.Button(
                     "Processar áudio",
                     variant="primary",
@@ -497,8 +752,9 @@ def gradio_interface() -> gr.Blocks:
                 )
                 gr.Markdown(
                     "Na primeira execução, o Demucs baixará o modelo htdemucs. "
-                    "A separação já é real; somente a correção DSP permanece "
-                    "em modo transparente nesta iteração."
+                    "Use o preset **Suave** para material já masterizado e "
+                    "compare o resultado com o original antes de aumentar a "
+                    "intensidade."
                 )
 
             with gr.Column(scale=1, elem_classes="studio-panel"):
@@ -508,6 +764,22 @@ def gradio_interface() -> gr.Blocks:
                     type="filepath",
                     interactive=False,
                 )
+                with gr.Accordion("Auditoria dos stems", open=False):
+                    vocal_output = gr.Audio(
+                        label="Vocal isolado · antes do DSP",
+                        type="filepath",
+                        interactive=False,
+                    )
+                    processed_vocal_output = gr.Audio(
+                        label="Vocal isolado · depois do DSP",
+                        type="filepath",
+                        interactive=False,
+                    )
+                    instrumental_output = gr.Audio(
+                        label="Instrumental · no_vocals",
+                        type="filepath",
+                        interactive=False,
+                    )
                 analysis_output = gr.JSON(
                     label="Diagnóstico espectral preliminar",
                     open=False,
@@ -515,8 +787,14 @@ def gradio_interface() -> gr.Blocks:
 
         process_button.click(
             fn=process_audio,
-            inputs=input_audio,
-            outputs=[output_audio, analysis_output],
+            inputs=[input_audio, dsp_preset],
+            outputs=[
+                output_audio,
+                vocal_output,
+                processed_vocal_output,
+                instrumental_output,
+                analysis_output,
+            ],
             show_progress="full",
         )
 

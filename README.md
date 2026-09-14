@@ -74,6 +74,31 @@ usarão o modelo armazenado no cache local.
 O motor tenta executar a separação no backend MPS/Metal. Caso essa etapa falhe,
 ela é repetida automaticamente em CPU.
 
+## Processamento DSP
+
+A análise MIR procura eventos sustentados nas regiões de `600–1.200 Hz`
+(nasalidade) e `4–9 kHz` (sibilância). As frequências dominantes e os intervalos
+detectados controlam uma cadeia regionalizada do Pedalboard:
+
+- filtro paramétrico para atenuação de nasalidade;
+- filtro paramétrico e compressor para De-Esser;
+- envelopes de ataque e release para evitar clicks nas transições;
+- proteção de pico no mixdown final.
+
+A interface oferece os presets **Suave**, **Balanceado** e **Intenso**, além de
+players separados para o vocal antes/depois do DSP e para o instrumental.
+
+> A detecção é heurística e ainda não representa um classificador fonético.
+> Faça sempre a comparação A/B, especialmente com material já masterizado.
+
+## Testes
+
+Execute a suíte de regressão com o ambiente virtual ativo:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 ## Verificação do MPS
 
 O próprio setup informa ao final se o backend MPS está compilado e disponível. A verificação também pode ser repetida manualmente:
@@ -92,7 +117,8 @@ O resultado esperado em um Mac Apple Silicon compatível é `True`.
 ├── README.md
 ├── app.py             # Pipeline de áudio e interface Gradio
 ├── env/              # Ambiente virtual local (não versionar)
-└── setup_mac.sh      # Preparação automatizada do macOS
+├── setup_mac.sh      # Preparação automatizada do macOS
+└── tests/             # Testes automatizados do DSP e do mixdown
 ```
 
 ## Status
@@ -102,6 +128,8 @@ Projeto em fase de Prova de Conceito:
 - separação real de `vocals` e `no_vocals` com `htdemucs`;
 - aceleração MPS com fallback automático para CPU;
 - análise MIR heurística de nasalidade e sibilância;
+- EQ dinâmica e De-Esser regionalizados com três níveis de intensidade;
 - interface Gradio funcional com progresso e diagnóstico;
+- auditoria dos stems e do vocal antes/depois do DSP;
 - mixdown e exportação WAV em 32-bit float;
-- correção DSP ainda em modo transparente, sem alterar deliberadamente o vocal.
+- proteção automática contra pico acima de `-0,09 dBFS` no mix final.
