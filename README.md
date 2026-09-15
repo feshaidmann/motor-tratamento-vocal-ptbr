@@ -38,9 +38,12 @@ As janelas iniciais são:
 
 - **Demucs + PyTorch** — separação de fontes, com MPS/Metal e fallback para CPU;
 - **Librosa + SciPy** — MIR, análise espectral, reamostragem e true peak estimado;
+- **pyloudnorm** — loudness integrado conforme ITU-R BS.1770-4;
 - **Pedalboard** — filtros paramétricos e compressor;
 - **NumPy + SoundFile** — arrays, alinhamento, recombinação e WAV float32;
-- **Gradio** — interface local para upload, A/B, stems e diagnóstico JSON;
+- **Gradio + FastAPI** — painel técnico e superfície pública de audição;
+- **Web Audio API** — reprodução A/B/X com relógio e buffers compartilhados;
+- **SQLite** — sessões e votos transacionais, com exportação JSONL;
 - **FFmpeg** — leitura de MP3 e suporte de mídia.
 
 ## Ambiente-alvo
@@ -79,12 +82,49 @@ source env/bin/activate
 python app.py
 ```
 
-Abra [http://127.0.0.1:7860](http://127.0.0.1:7860). No primeiro uso, o Demucs
-baixará o modelo `htdemucs`; as execuções seguintes reutilizam o cache local.
+Abra o painel técnico em
+[http://127.0.0.1:7860/admin/](http://127.0.0.1:7860/admin/). No primeiro uso,
+o Demucs baixará o modelo `htdemucs`; as execuções seguintes reutilizam o cache
+local. O terminal mostra a credencial administrativa gerada para aquela execução.
+Para fixá-la, defina `MOTOR_VOCAL_ADMIN_USER` e `MOTOR_VOCAL_ADMIN_PASSWORD`
+antes de iniciar a aplicação.
 
 A interface oferece presets **Suave**, **Balanceado** e **Intenso**, controles
-independentes para os três módulos, players da mix e dos stems, além do relatório
-JSON com confiança, motivos de abstenção e métricas de qualidade.
+independentes para os três módulos, players da mix e dos stems, relatório JSON
+com confiança, motivos de abstenção e métricas de qualidade, além do controle de
+publicação das audições cegas.
+
+O painel **Comparação técnica nivelada** gera players dedicados do original e do
+processado com loudness integrado igualado. O arquivo processado bruto permanece
+separado para download e auditoria, evitando confundi-lo com o estímulo de teste.
+
+## Audição cega A/B/ABX
+
+Depois de processar uma faixa, informe o ID do experimento e clique em **Criar
+link de audição**:
+
+- A e B recebem aleatoriamente as condições original e processada;
+- X é uma cópia exata de A ou B;
+- as quatro combinações A/B × X são balanceadas em blocos por experimento;
+- os estímulos são alinhados em amostras e têm duração e canais idênticos;
+- o sinal perceptualmente mais alto é atenuado para igualar o loudness integrado
+  BS.1770, sem vantagem de volume;
+- o participante recebe uma rota isolada `/audicao/<token>`, sem players
+  identificados, diagnóstico ou revelação da resposta;
+- o painel `/admin` exige autenticação; abra o link participante em uma janela
+  privada ou em outro perfil para não reutilizar a sessão do operador;
+- o Web Audio API inicia A, B e X no mesmo relógio e alterna ganhos com crossfade
+  de 5 ms;
+- a resposta ABX, preferência, confiança e observações são gravadas de forma
+  transacional em `outputs/auditions/auditions.sqlite3`;
+- **Exportar votos JSONL** gera `outputs/auditions/abx_votes.jsonl` a partir do
+  banco, sem usar o arquivo como armazenamento primário.
+
+Cada registro inclui semente, mapa cego, hashes dos estímulos, configuração e
+diagnóstico do motor, commit e estado Git, hashes de código/dependências e versões
+do runtime. O banco impõe um único voto por sessão, inclusive sob repetição de
+requisição. Para coleta formal, ative **Modo oficial**; a publicação será recusada
+se a árvore Git contiver alterações não registradas.
 
 ## Segurança e controle de qualidade
 
@@ -160,7 +200,7 @@ Limites desta baseline:
 
 ```text
 .
-├── app.py                  # Pipeline de áudio, decisão, QC e interface
+├── app.py                  # Pipeline, painel técnico, API cega e persistência
 ├── benchmarks/
 │   └── benchmark_backends.py # Harness reproduzível CPU × MPS
 ├── docs/
@@ -189,4 +229,5 @@ Medido: baseline inicial CPU × MPS da separação em uma faixa de referência.
 
 Próximos marcos para beta: ampliar a matriz CPU × MPS para mais formatos e o
 pipeline completo, formar um corpus piloto de canto PT-BR, calibrar os limiares,
-adicionar loudness BS.1770, chave A/B sincronizada e avaliação perceptual AB/ABX.
+validar a equalização BS.1770 com medidor de referência e consolidar a análise
+estatística das avaliações perceptuais.
