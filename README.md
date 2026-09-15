@@ -172,6 +172,22 @@ medidores e true peak de até `-0,9 dBTP` (tolerância de `0,1 dB` sobre o alvo 
 aplicação). O relatório JSON fica em `benchmarks/results/`; o comando retorna
 código diferente de zero se algum par for reprovado.
 
+## Corpus piloto local
+
+O construtor procura sessões completas em `outputs/`, seleciona uma janela de
+30 segundos com alta atividade vocal, reconstrói a mix original a partir dos
+stems, aplica o mesmo nivelamento da audição e valida cada par com FFmpeg:
+
+```bash
+python benchmarks/build_pilot_corpus.py
+```
+
+O resultado fica em `outputs/corpus_ptbr_seed_v1/`, com estímulos identificados
+por códigos neutros, `manifest.json` e `anotacoes.csv`. A tabela de anotações
+deve ser revisada por uma pessoa para registrar variante do português, região,
+gênero, perfil vocal e autorização de uso. O corpus é local e não deve ser
+compartilhado enquanto `direitos_confirmados` não estiver preenchido.
+
 ## Benchmark CPU × MPS
 
 O harness executa o mesmo modelo e arquivo em processos isolados, registra
@@ -222,6 +238,7 @@ Limites desta baseline:
 ├── app.py                  # Pipeline, painel técnico, API cega e persistência
 ├── benchmarks/
 │   ├── benchmark_backends.py # Harness reproduzível CPU × MPS
+│   ├── build_pilot_corpus.py  # Corpus local e seleção dos trechos
 │   └── validate_loudness.py  # Validação FFmpeg × pyloudnorm
 ├── docs/
 │   └── build_whitepaper.py # Fonte reproduzível do whitepaper
