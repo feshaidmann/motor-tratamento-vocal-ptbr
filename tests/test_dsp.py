@@ -77,6 +77,10 @@ class DSPCorrectionTests(unittest.TestCase):
         self.assertEqual(info.subtype, "FLOAT")
         self.assertEqual(rendered_sr, self.sample_rate)
         self.assertLessEqual(float(np.max(np.abs(rendered))), 0.990001)
+        self.assertLessEqual(
+            app._linear_to_dbfs(app._approximate_true_peak_linear(rendered)),
+            app.TRUE_PEAK_TARGET_DBTP + 0.1,
+        )
 
     def test_stem_alignment_restores_rate_length_and_mono_layout(self) -> None:
         source = np.column_stack(
@@ -105,6 +109,38 @@ class DSPCorrectionTests(unittest.TestCase):
         self.assertAlmostEqual(adjustment_db, 1.5)
         expected_gain = 10.0 ** (1.5 / 20.0)
         np.testing.assert_allclose(adjusted, quiet * expected_gain, rtol=1e-6)
+
+    def test_silent_vocal_forces_decision_abstention(self) -> None:
+        silence = np.zeros((self.sample_rate, 2), dtype=np.float32)
+        analysis = app.analyze_ptbr_artifacts(silence, self.sample_rate)
+
+        for key in ("nasalidade_ao_o", "estridencia_2_4khz", "sibilancia_s_x"):
+            self.assertFalse(analysis[key]["intervencao_autorizada"])
+
+    def test_perfect_stem_reconstruction_is_reliable(self) -> None:
+        original = self._test_audio()
+        vocals = original * 0.60
+        instrumental = original * 0.40
+        quality = app.evaluate_stem_reconstruction(original, vocals, instrumental)
+
+        self.assertTrue(quality["confiavel"])
+        self.assertGreaterEqual(quality["similaridade_normalizada"], 0.9999)
+
+    def test_unreliable_separation_prevents_dsp(self) -> None:
+        audio = self._test_audio()
+        analysis = self._analysis(with_regions=True)
+        analysis["qualidade_separacao"] = {"confiavel": False}
+        processed = app.apply_dsp_correction(audio, self.sample_rate, analysis)
+
+        np.testing.assert_array_equal(processed, audio)
+        self.assertEqual(
+            analysis["correcao_dsp"]["status"],
+            "abstencao_separacao",
+        )
+        self.assertEqual(
+            analysis["correcao_dsp"]["nasalidade"]["status"],
+            "abstencao_separacao",
+        )
 
 
 if __name__ == "__main__":

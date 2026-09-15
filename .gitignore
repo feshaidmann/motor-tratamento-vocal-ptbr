@@ -20,8 +20,10 @@ separated/
 outputs/
 *.tmp.wav
 
+# Artefatos intermediários da geração de documentos
+tmp/
+
 # Variáveis de ambiente e segredos locais
 .env
 .env.*
 !.env.example
-

@@ -1,0 +1,2 @@
+# Dependências para regenerar o whitepaper técnico.
+reportlab==4.4.9
