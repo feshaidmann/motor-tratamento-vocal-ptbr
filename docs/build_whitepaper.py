@@ -64,7 +64,7 @@ class CoverCard(Flowable):
 
         canvas.setFont("Helvetica-Bold", 9)
         canvas.setFillColor(CYAN)
-        canvas.drawString(30 * mm, 10 * mm, "VERSÃO 1.0 · SETEMBRO 2026")
+        canvas.drawString(30 * mm, 10 * mm, "VERSÃO 1.1 · SETEMBRO 2026")
 
 
 def paragraph_styles() -> dict[str, ParagraphStyle]:
@@ -290,7 +290,7 @@ def build_story() -> list:
                     ["Motor de decisão", "Entregue / inicial", "Abstenção por silêncio, baixa confiança ou reconstrução não confiável"],
                     ["DSP", "Entregue / experimental", "EQ regionalizada, compressor, envelopes e presets por intensidade"],
                     ["QC", "Entregue / básico", "Reconstrução, RMS, sample peak, true peak estimado 4x, correlação e delta espectral"],
-                    ["Benchmark", "Harness entregue", "CPU/MPS, tempo, RTF, pico de RSS, ambiente e hash da entrada"],
+                    ["Benchmark", "Baseline inicial", "Harness CPU/MPS e primeira medição em Mac mini M4 (uma faixa, apenas separação)"],
                     ["Validação PT-BR", "Pendente", "Corpus anotado, precisão/recall/F1 e avaliação AB/ABX"],
                 ],
                 [35 * mm, 31 * mm, 105 * mm],
@@ -391,7 +391,7 @@ def build_story() -> list:
             data_table(
                 [
                     ["MÉTRICA", "COMO MEDIR", "ESTADO"],
-                    ["Latência / RTF", "Mesmo arquivo e parâmetros em CPU e MPS", "Harness implementado; matriz pendente"],
+                    ["Latência / RTF", "Mesmo arquivo e parâmetros em CPU e MPS", "Baseline inicial medida (seção 6.2)"],
                     ["Memória", "Pico de RSS da árvore do processo", "Harness implementado; GPU não isolada"],
                     ["Reconstrução", "Erro RMS relativo e similaridade", "Implementado"],
                     ["Separação", "SDR/SI-SDR mais escuta cega", "Pendente por falta de referência"],
@@ -399,7 +399,22 @@ def build_story() -> list:
                 ],
                 [38 * mm, 91 * mm, 42 * mm],
             ),
-            P("6.2 Controle de qualidade atual", "h2"),
+            P("6.2 Baseline inicial em Mac mini M4", "h2"),
+            P(
+                "Medição de 14/09/2026 no commit e45c01f, com uma faixa de referência em WAV estéreo, 44,1 kHz e 225 s. Três execuções medidas por backend, após um aquecimento descartado. No tempo mediano, o MPS foi cerca de 3,1 vezes mais rápido que a CPU.",
+            ),
+            data_table(
+                [
+                    ["BACKEND", "TEMPO MEDIANO", "RTF MÉDIO", "PICO DE RSS"],
+                    ["CPU", "55,8 s", "0,251", "3.054 MB"],
+                    ["MPS", "17,9 s", "0,081", "2.208 MB"],
+                ],
+                [38 * mm, 45 * mm, 43 * mm, 45 * mm],
+            ),
+            callout(
+                "<b>Escopo da medição:</b> apenas a separação com Demucs, em uma única faixa. Análise, DSP, QC e exportação não entram no tempo; outros formatos, taxas de amostragem e canais ainda não foram medidos. Ambiente: macOS 26.6.2, Python 3.13.7, PyTorch 2.15.0.dev20260914 e Demucs 4.1.0."
+            ),
+            P("6.3 Controle de qualidade atual", "h2"),
             bullet("Abstenção global se a reconstrução dos stems não for confiável."),
             bullet("Abstenção local por score de confiança e nível mínimo do vocal."),
             bullet("Proteção de true peak estimado por oversampling 4x, alvo -1 dBTP."),
@@ -436,7 +451,7 @@ def build_story() -> list:
             data_table(
                 [
                     ["PRIORIDADE", "INCREMENTO", "RESULTADO"],
-                    ["P0", "Executar matriz CPU x MPS com áudio de referência", "Baseline de RTF e RSS reproduzível"],
+                    ["P0", "Ampliar matriz CPU x MPS para mais formatos e pipeline completo", "Baseline de RTF e RSS representativa"],
                     ["P0", "Corpus piloto e ferramenta de anotação", "Calibração de confiança e falsos positivos"],
                     ["P1", "Loudness BS.1770 e QC espectral por bandas", "A/B mais rigoroso"],
                     ["P1", "Chave A/B sincronizada e teste cego", "Avaliação perceptual consistente"],

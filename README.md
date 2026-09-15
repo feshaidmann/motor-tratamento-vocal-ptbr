@@ -135,6 +135,27 @@ conter metadados do ambiente local. O pico de memória representa o RSS do
 processo Demucs e seus descendentes; ele não é uma medição dedicada de toda a
 memória unificada consumida pela GPU.
 
+### Baseline inicial (Mac mini M4)
+
+Medição de 14/09/2026 (horário de Brasília) no commit `e45c01f`, com uma
+faixa de referência em WAV estéreo, 44,1 kHz e 225 s de duração. Foram três
+execuções medidas por backend, após um aquecimento descartado.
+
+| Backend | Tempo mediano | RTF médio | Pico de RSS |
+|---|---:|---:|---:|
+| CPU | 55,8 s | 0,251 | 3.054 MB |
+| MPS | 17,9 s | 0,081 | 2.208 MB |
+
+No tempo mediano, o MPS foi cerca de 3,1 vezes mais rápido que a CPU.
+
+Limites desta baseline:
+
+- mede somente a separação com Demucs; análise, DSP, QC e exportação não entram
+  no tempo;
+- usa uma única faixa, sem variação de formato, taxa de amostragem ou canais;
+- ambiente: macOS 26.6.2, Python 3.13.7, PyTorch 2.15.0.dev20260914 e
+  Demucs 4.1.0.
+
 ## Estrutura
 
 ```text
@@ -164,6 +185,8 @@ Implementado: separação real, MPS com fallback, três módulos DSP regionaliza
 confiança e abstenção, presets, auditoria dos stems, exportação float32, proteção
 de pico e QC básico.
 
-Próximos marcos para beta: executar e publicar a matriz CPU × MPS com áudio de
-referência, formar um corpus piloto de canto PT-BR, calibrar os limiares,
+Medido: baseline inicial CPU × MPS da separação em uma faixa de referência.
+
+Próximos marcos para beta: ampliar a matriz CPU × MPS para mais formatos e o
+pipeline completo, formar um corpus piloto de canto PT-BR, calibrar os limiares,
 adicionar loudness BS.1770, chave A/B sincronizada e avaliação perceptual AB/ABX.
