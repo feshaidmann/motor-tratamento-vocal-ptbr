@@ -153,6 +153,25 @@ Para verificar o MPS:
 python -c "import torch; print(torch.backends.mps.is_available())"
 ```
 
+## Validação independente de loudness
+
+O validador compara os estímulos nivelados com dois medidores: `pyloudnorm`,
+usado pela aplicação, e o filtro independente `ebur128` do FFmpeg. Também exige
+sample rate, canais e número de frames idênticos e verifica o teto de true peak.
+
+Para validar um par:
+
+```bash
+python benchmarks/validate_loudness.py \
+  --pair original_nivelado.wav processado_nivelado.wav
+```
+
+Para um corpus, repita `--pair` no mesmo comando. Os critérios padrão são
+diferença residual máxima de `0,2 LU`, divergência máxima de `0,2 LU` entre os
+medidores e true peak de até `-0,9 dBTP` (tolerância de `0,1 dB` sobre o alvo da
+aplicação). O relatório JSON fica em `benchmarks/results/`; o comando retorna
+código diferente de zero se algum par for reprovado.
+
 ## Benchmark CPU × MPS
 
 O harness executa o mesmo modelo e arquivo em processos isolados, registra
@@ -202,7 +221,8 @@ Limites desta baseline:
 .
 ├── app.py                  # Pipeline, painel técnico, API cega e persistência
 ├── benchmarks/
-│   └── benchmark_backends.py # Harness reproduzível CPU × MPS
+│   ├── benchmark_backends.py # Harness reproduzível CPU × MPS
+│   └── validate_loudness.py  # Validação FFmpeg × pyloudnorm
 ├── docs/
 │   └── build_whitepaper.py # Fonte reproduzível do whitepaper
 ├── output/pdf/             # Whitepaper publicado
@@ -223,11 +243,11 @@ python docs/build_whitepaper.py
 
 Implementado: separação real, MPS com fallback, três módulos DSP regionalizados,
 confiança e abstenção, presets, auditoria dos stems, exportação float32, proteção
-de pico e QC básico.
+de pico, QC básico e validação independente de loudness.
 
 Medido: baseline inicial CPU × MPS da separação em uma faixa de referência.
 
 Próximos marcos para beta: ampliar a matriz CPU × MPS para mais formatos e o
 pipeline completo, formar um corpus piloto de canto PT-BR, calibrar os limiares,
-validar a equalização BS.1770 com medidor de referência e consolidar a análise
-estatística das avaliações perceptuais.
+executar a validação BS.1770 no corpus e consolidar a análise estatística das
+avaliações perceptuais.
