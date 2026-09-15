@@ -113,11 +113,35 @@ Para verificar o MPS:
 python -c "import torch; print(torch.backends.mps.is_available())"
 ```
 
+## Benchmark CPU × MPS
+
+O harness executa o mesmo modelo e arquivo em processos isolados, registra
+tempo, RTF (tempo de processamento dividido pela duração do áudio), pico de RSS,
+versões do ambiente e hash da entrada:
+
+```bash
+python benchmarks/benchmark_backends.py "/caminho/para/referencia.wav"
+```
+
+Por padrão, cada backend recebe um aquecimento descartado e três execuções
+medidas. Para um teste rápido:
+
+```bash
+python benchmarks/benchmark_backends.py referencia.wav --runs 1 --warmup 0
+```
+
+Os relatórios ficam em `benchmarks/results/` e não são versionados, pois podem
+conter metadados do ambiente local. O pico de memória representa o RSS do
+processo Demucs e seus descendentes; ele não é uma medição dedicada de toda a
+memória unificada consumida pela GPU.
+
 ## Estrutura
 
 ```text
 .
 ├── app.py                  # Pipeline de áudio, decisão, QC e interface
+├── benchmarks/
+│   └── benchmark_backends.py # Harness reproduzível CPU × MPS
 ├── docs/
 │   └── build_whitepaper.py # Fonte reproduzível do whitepaper
 ├── output/pdf/             # Whitepaper publicado
@@ -140,6 +164,6 @@ Implementado: separação real, MPS com fallback, três módulos DSP regionaliza
 confiança e abstenção, presets, auditoria dos stems, exportação float32, proteção
 de pico e QC básico.
 
-Próximos marcos para beta: benchmark CPU x MPS, corpus piloto de canto PT-BR,
-calibração dos limiares, loudness BS.1770, chave A/B sincronizada e avaliação
-perceptual AB/ABX documentada.
+Próximos marcos para beta: executar e publicar a matriz CPU × MPS com áudio de
+referência, formar um corpus piloto de canto PT-BR, calibrar os limiares,
+adicionar loudness BS.1770, chave A/B sincronizada e avaliação perceptual AB/ABX.

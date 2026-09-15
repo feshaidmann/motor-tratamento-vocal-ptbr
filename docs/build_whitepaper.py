@@ -290,6 +290,7 @@ def build_story() -> list:
                     ["Motor de decisão", "Entregue / inicial", "Abstenção por silêncio, baixa confiança ou reconstrução não confiável"],
                     ["DSP", "Entregue / experimental", "EQ regionalizada, compressor, envelopes e presets por intensidade"],
                     ["QC", "Entregue / básico", "Reconstrução, RMS, sample peak, true peak estimado 4x, correlação e delta espectral"],
+                    ["Benchmark", "Harness entregue", "CPU/MPS, tempo, RTF, pico de RSS, ambiente e hash da entrada"],
                     ["Validação PT-BR", "Pendente", "Corpus anotado, precisão/recall/F1 e avaliação AB/ABX"],
                 ],
                 [35 * mm, 31 * mm, 105 * mm],
@@ -390,8 +391,8 @@ def build_story() -> list:
             data_table(
                 [
                     ["MÉTRICA", "COMO MEDIR", "ESTADO"],
-                    ["Latência / RTF", "Mesmo arquivo e parâmetros em CPU e MPS", "Pendente como harness reproduzível"],
-                    ["Memória", "Pico de RAM e memória unificada", "Pendente"],
+                    ["Latência / RTF", "Mesmo arquivo e parâmetros em CPU e MPS", "Harness implementado; matriz pendente"],
+                    ["Memória", "Pico de RSS da árvore do processo", "Harness implementado; GPU não isolada"],
                     ["Reconstrução", "Erro RMS relativo e similaridade", "Implementado"],
                     ["Separação", "SDR/SI-SDR mais escuta cega", "Pendente por falta de referência"],
                     ["Robustez", "Gênero, sotaque, registro, microfone e compressão", "Pendente por corpus"],
@@ -403,7 +404,7 @@ def build_story() -> list:
             bullet("Abstenção local por score de confiança e nível mínimo do vocal."),
             bullet("Proteção de true peak estimado por oversampling 4x, alvo -1 dBTP."),
             bullet("Preservação de sample rate, duração, canais e exportação WAV float32."),
-            bullet("Oito testes automatizados de DSP, alinhamento, reconstrução e QC."),
+            bullet("Onze testes automatizados de DSP, alinhamento, reconstrução, QC e benchmark."),
             callout(
                 "<b>Limite:</b> ainda faltam loudness integrado conforme ITU-R BS.1770, true peak certificado, detecção automática de artefatos e métricas com stems de referência."
             ),
@@ -435,7 +436,7 @@ def build_story() -> list:
             data_table(
                 [
                     ["PRIORIDADE", "INCREMENTO", "RESULTADO"],
-                    ["P0", "Harness CPU x MPS e telemetria local", "RTF e memória reproduzíveis"],
+                    ["P0", "Executar matriz CPU x MPS com áudio de referência", "Baseline de RTF e RSS reproduzível"],
                     ["P0", "Corpus piloto e ferramenta de anotação", "Calibração de confiança e falsos positivos"],
                     ["P1", "Loudness BS.1770 e QC espectral por bandas", "A/B mais rigoroso"],
                     ["P1", "Chave A/B sincronizada e teste cego", "Avaliação perceptual consistente"],

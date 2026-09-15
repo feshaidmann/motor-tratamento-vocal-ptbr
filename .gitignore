@@ -23,6 +23,9 @@ outputs/
 # Artefatos intermediários da geração de documentos
 tmp/
 
+# Resultados locais de benchmark (a pasta permanece versionada)
+benchmarks/results/*.json
+
 # Variáveis de ambiente e segredos locais
 .env
 .env.*
