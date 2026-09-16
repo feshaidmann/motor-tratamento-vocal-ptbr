@@ -36,7 +36,8 @@ As janelas iniciais são:
 
 ## Tecnologias
 
-- **Demucs + PyTorch** — separação de fontes, com MPS/Metal e fallback para CPU;
+- **Demucs + PyTorch** — separação de fontes, com CUDA/NVIDIA, MPS/Metal e
+  fallback para CPU;
 - **Librosa + SciPy** — MIR, análise espectral, reamostragem e true peak estimado;
 - **pyloudnorm** — loudness integrado conforme ITU-R BS.1770-4;
 - **Pedalboard** — filtros paramétricos e compressor;
@@ -94,6 +95,16 @@ independentes para os três módulos, players da mix e dos stems, relatório JSO
 com confiança, motivos de abstenção e métricas de qualidade, além do controle de
 publicação das audições cegas.
 
+O painel envia cada áudio para uma fila local com um worker. Ele mostra o ID e o
+estado do trabalho; após recarregar a página, use **Consultar trabalho** com o ID
+para recuperar os resultados. O piloto admite até 50 novos trabalhos por dia no
+calendário de São Paulo, arquivos WAV/MP3 de até 5 minutos e 150 MB e até cinco
+eventos de envio concorrentes. Esse novo limite é experimental: o pipeline de
+músicas completas ainda não foi validado em GPU AWS nem sob carga. O banco, os
+uploads e os resultados da fila ficam em
+`outputs/jobs/`, ignorado pelo Git. A retenção desses arquivos ainda não foi
+definida; monitore o espaço em disco no piloto local.
+
 O painel **Comparação técnica nivelada** gera players dedicados do original e do
 processado com loudness integrado igualado. O arquivo processado bruto permanece
 separado para download e auditoria, evitando confundi-lo com o estímulo de teste.
@@ -125,6 +136,37 @@ diagnóstico do motor, commit e estado Git, hashes de código/dependências e ve
 do runtime. O banco impõe um único voto por sessão, inclusive sob repetição de
 requisição. Para coleta formal, ative **Modo oficial**; a publicação será recusada
 se a árvore Git contiver alterações não registradas.
+
+### Campanha ABX interna
+
+Com os direitos de uso interno preenchidos como `sim` em `anotacoes.csv`, uma
+campanha pode ser criada localmente para vários ouvintes:
+
+```bash
+python benchmarks/manage_abx_campaign.py create \
+  --campaign-id piloto-interno-01 --participants 5
+```
+
+O comando gera cinco sequências aleatórias sobre o corpus, balanceia as quatro
+células A/B × X entre participantes e grava apenas tokens opacos. Cada ouvinte
+acessa `/campanha/<token>` e só avança depois de registrar o item atual. Os
+links são credenciais privadas e ficam em um JSON com permissão local restrita.
+A semente, a ordem dos itens e a célula A/B × X de cada rodada ficam registradas
+na auditoria para permitir reprodução e conferência posterior. Para uma URL que
+não seja local, use `--base-url` ou `MOTOR_VOCAL_BASE_URL`.
+
+Após a coleta, o relatório pode ser exportado com:
+
+```bash
+python benchmarks/manage_abx_campaign.py report \
+  --campaign-id piloto-interno-01
+```
+
+O relatório exclui campanhas incompletas, agrega acerto ABX e preferência geral,
+por item, por módulo ativo e também na unidade correta de participante. O
+intervalo de confiança por participante é o principal resumo; o teste binomial
+por voto permanece exploratório e não substitui um modelo estatístico que trate
+a dependência por ouvinte.
 
 ## Segurança e controle de qualidade
 
@@ -187,6 +229,9 @@ por códigos neutros, `manifest.json` e `anotacoes.csv`. A tabela de anotações
 deve ser revisada por uma pessoa para registrar variante do português, região,
 gênero, perfil vocal e autorização de uso. O corpus é local e não deve ser
 compartilhado enquanto `direitos_confirmados` não estiver preenchido.
+O escopo registrado em `anotacoes.csv` e `manifest.json` deve ser conferido antes
+de qualquer uso externo; autorização para processamento interno na AWS não
+equivale a autorização para publicação ou compartilhamento público.
 
 ## Benchmark CPU × MPS
 
@@ -236,8 +281,13 @@ Limites desta baseline:
 ```text
 .
 ├── app.py                  # Pipeline, painel técnico, API cega e persistência
+├── motor_vocal/
+│   ├── campaign.py       # Campanhas ABX internas e análise estatística
+│   ├── separation.py      # Demucs, seleção CUDA/MPS/CPU e alinhamento
+│   └── quality.py         # Métricas de reconstrução independentes da UI
 ├── benchmarks/
 │   ├── benchmark_backends.py # Harness reproduzível CPU × MPS
+│   ├── manage_abx_campaign.py # Criação e relatório de campanhas internas
 │   ├── build_pilot_corpus.py  # Corpus local e seleção dos trechos
 │   └── validate_loudness.py  # Validação FFmpeg × pyloudnorm
 ├── docs/
@@ -246,7 +296,7 @@ Limites desta baseline:
 ├── requirements.txt        # Dependências da aplicação
 ├── requirements-docs.txt   # Dependências da documentação
 ├── setup_mac.sh            # Preparação automatizada do macOS
-└── tests/                  # Regressão de DSP, alinhamento, reconstrução e QC
+└── tests/                  # Regressão de DSP, jobs, campanha e QC
 ```
 
 Para regenerar o whitepaper:

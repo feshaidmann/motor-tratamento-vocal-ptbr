@@ -8,7 +8,7 @@ O posicionamento mais defensável é **revisão e tratamento seletivo da voz can
 
 Prioridade recomendada:
 
-1. Transformar o pipeline de 30 segundos em um serviço confiável para músicas completas, com fila e custo medido.
+1. Validar o novo limite local de 5 minutos/150 MB em músicas completas e transformá-lo em um serviço confiável, com fila e custo medido.
 2. Transformar a saída técnica atual em uma experiência de **revisão por eventos**: ouvir onde o motor agiu, ajustar intensidade e comparar versões sem reenviar a faixa.
 3. Só depois ampliar DSP, fluxo profissional e integrações. Não disputar, de início, geração musical, masterização completa, clonagem de voz ou DAW generalista.
 
@@ -22,7 +22,7 @@ Prioridade recomendada:
 | Abstenção por confiança e qualidade de reconstrução dos stems | Implementada | Pode sustentar explicação transparente; não deve virar selo automático de “resultado aprovado”. |
 | Mix processado, vocal original isolado, vocal tratado e instrumental em WAV float32 | Implementados em `motor_vocal/pipeline.py` | Base para exportação profissional; quatro arquivos por música elevam armazenamento e tráfego. |
 | Comparação original/processado com loudness nivelado e testes cegos A/B/X | Implementada no painel técnico | Base valiosa para revisão e avaliação; a infraestrutura de audição interna não é, ainda, um produto multiusuário. |
-| Músicas completas, pagamento, créditos, 20 jobs simultâneos e fila em nuvem | **Não implementados**; piloto limita a 30 segundos e um worker local | São pré-requisitos de oferta comercial, não funcionalidades já vendáveis. |
+| Músicas completas, pagamento, créditos, 20 jobs simultâneos e fila em nuvem | A admissão local aceita até 5 minutos/150 MB, **sem benchmark end-to-end de faixa completa**; pagamento, créditos e fila em nuvem não implementados; um worker local | São pré-requisitos de oferta comercial, não funcionalidades já vendáveis. |
 
 O comando `--two-stems=vocals` do Demucs **não torna a inferência mais rápida nem economiza memória**, segundo a [documentação do próprio Demucs](https://github.com/facebookresearch/demucs). O pipeline atual também apaga os WAVs intermediários da separação; para gerar novas versões sem repetir o modelo, será preciso persistir temporariamente os stems e a análise, com controle de acesso, retenção e expiração.
 
@@ -43,7 +43,7 @@ Escala de esforço relativo: **P** pequeno, **M** médio, **G** grande. Não sã
 
 | Prioridade | Funcionalidade | Valor para o usuário | Reuso e trabalho novo | Risco principal / critério de liberação |
 | --- | --- | --- | --- | --- |
-| **0** | Música inteira com limite por duração/tamanho | Trata a obra real, sem recorte | Motor atual; **G** em memória, upload, fila, timeout e custo | Benchmark de 3–5 min em GPU, inclusive pico, sem artefatos de fronteira. |
+| **0** | Música inteira com limite por duração/tamanho | Trata a obra real, sem recorte | Admissão local implementada; **G** em memória, upload, fila, timeout e custo para produção | Benchmark de 3–5 min em GPU, inclusive pico, sem artefatos de fronteira. |
 | **0** | Linha do tempo dos eventos detectados | Mostra onde o motor interveio ou se absteve; usuário revisa apenas pontos relevantes | Usa `regioes_sustentadas` e decisões existentes; **M** de UI e mapeamento | Não chamar eventos de “fonemas errados” nem sugerir diagnóstico clínico. |
 | **0** | A/B nivelado por evento, com bypass instantâneo | Facilita julgar melhora real sem viés de volume | Reaproveita comparação atual; **M** de player e sincronismo | Alinhamento exato e mesmo loudness na comparação, preservando o arquivo bruto. |
 | **0** | Gerar até algumas variantes da **mesma** faixa | Usuário compara Suave/Balanceado/Intenso sem novo upload | Reusa stems e análise; **M/G** para cache, re-render e versionamento | Não refazer Demucs em cada variante; controlar retenção e custo. |

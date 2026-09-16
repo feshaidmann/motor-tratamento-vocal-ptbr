@@ -75,8 +75,8 @@ Se as 20 GPUs ficarem ligadas 24 horas por dia, seu custo isolado seria cerca de
 
 1. Processar músicas reais de 3 a 5 minutos na GPU AWS e medir p50/p95 de duração, memória e falhas.
 2. Rever os quatro WAVs atuais: baixar apenas o mix por padrão pode reduzir a saída de dados; arquivos técnicos podem ser solicitados quando necessários.
-3. Implementar validação de 5 minutos/150 MB, contagem transacional de créditos, fila durável, teto global de 20, prioridade justa, estados e estimativa de espera.
+3. Validar o limite local de 5 minutos/150 MB com músicas completas e implementar contagem transacional de créditos, fila durável, teto global de 20, prioridade justa, estados e estimativa de espera.
 4. Definir política de retenção e exclusão, suporte, termos de uso de áudio enviado, prazo de uso da compra avulsa e regras de cobrança/cancelamento.
 5. Recalcular preço e margem com custos reais, impostos, taxas de pagamento e uso observado do plano gratuito.
 
-**Estado atual do repositório:** piloto técnico com entrada limitada a 30 segundos, fila local de um worker e sem planos comerciais, checkout ou controle de créditos. Nada neste documento altera esses limites em produção.
+**Estado atual do repositório:** o piloto local agora admite arquivos de até 5 minutos e 150 MB, mas ainda não há benchmark GPU de músicas completas. A fila continua local, com um worker, e não existem planos comerciais, checkout ou controle de créditos. O limite de 20 workers e todas as ofertas desta proposta continuam não implementados.
