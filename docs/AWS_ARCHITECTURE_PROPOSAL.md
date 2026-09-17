@@ -61,6 +61,11 @@ flowchart LR
 - A inspeção local somente leitura em `motor_vocal/retention.py` permite estimar candidatos antigos com uma data de corte explícita. Ela não remove arquivos e não define prazo.
 - Não colocar senha administrativa, credenciais AWS, URLs assinadas ou tokens de participantes em logs. O painel local ainda usa autenticação simples e precisa de desenho de acesso antes de exposição na internet.
 - Separar permissões de API, worker e audição. O link público de audição deve dar acesso apenas à rodada, nunca ao banco, diagnóstico ou caminhos de objetos.
+- Manter Block Public Access ativo no bucket e não emitir links permanentes; toda entrega passa por URL temporária de escopo limitado.
+- O worker não deve ter permissão para alcançar dados de outros trabalhos além do necessário para o `job_id` e a tentativa que está executando.
+- Derivar prefixos e chaves de objeto do `job_id` e da tentativa. Nome de arquivo enviado pelo usuário não é caminho confiável e não deve compor a chave.
+- Testar a exclusão de fato para cada classe: entrada, artefatos, temporários, objetos órfãos de tentativa interrompida e mensagens retidas na fila de falhas.
+- Definir orçamento e alarmes de custo **antes** de executar qualquer carga, e não apenas ao final do experimento.
 
 ## Decisões abertas
 
