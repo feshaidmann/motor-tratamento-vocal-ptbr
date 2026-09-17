@@ -17,6 +17,7 @@ from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
 from motor_vocal.pipeline import ProcessingResult, process_audio_file
+from motor_vocal.ports import AudioExecutorPort, JobStatePort
 from motor_vocal.processing import DSP_PRESETS
 
 
@@ -273,9 +274,18 @@ class LocalJobStore:
 class LocalWorker:
     """Executa um trabalho por chamada; o controle de loop fica no invocador."""
 
-    def __init__(self, store: LocalJobStore, output_root: str | Path) -> None:
+    def __init__(
+        self,
+        store: JobStatePort,
+        output_root: str | Path,
+        *,
+        executor: AudioExecutorPort | None = None,
+    ) -> None:
         self.store = store
         self.output_root = Path(output_root)
+        # Resolvido a cada execução: ``None`` mantém o padrão do módulo, que
+        # continua substituível por patch em ``motor_vocal.jobs``.
+        self.executor: AudioExecutorPort | None = executor
 
     def run_once(self) -> JobRecord | None:
         job = self.store.claim_next()
@@ -301,7 +311,8 @@ class LocalWorker:
             if job.engine_identity != engine_identity():
                 raise RuntimeError("A build mudou desde a criação do trabalho.")
             request = job.request
-            result = process_audio_file(
+            execute: AudioExecutorPort = self.executor or process_audio_file
+            result = execute(
                 request.input_path,
                 self.output_root / job.job_id / f"attempt_{job.attempts}",
                 preset_dsp=request.preset_dsp,
